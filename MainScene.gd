@@ -32,6 +32,7 @@ var _ball_speed
 var _ball_direction
 var _left_paddle_motion
 var _right_paddle_motion
+var _mouse_pressed_motion = 0
 
 func _ready():
 	randomize()
@@ -166,7 +167,7 @@ func _message_received(from_player_name, to_players, message):
 		
 		
 		MESSAGE_TYPE.UPDATE_PADDLE_POS_AND_MOTION:
-			if from_player_name == _left_player_name:
+			if message['pos'].x < 0.5 * rect_size.x:
 				_left_paddle.position = message['pos']
 				_left_paddle_motion = message['motion']
 			else:
@@ -206,7 +207,7 @@ func _message_received(from_player_name, to_players, message):
 
 
 
-var _mouse_pressed_motion = 0
+
 
 func _process(delta):
 	if _is_playing:
@@ -225,35 +226,40 @@ func _process(delta):
 			if _ball.position.x > _field_rect.position.x +  _field_rect.size.x:
 				Network.send_message({'type': MESSAGE_TYPE.PLAYER_LOST})
 		
-		#paddle
-		var my_paddle_motion = 0
-		var my_paddle = _left_paddle if Network.get_player_name() == _left_player_name else _right_paddle
-		#if OS.get_name() == 'Android' or OS.get_name() == "iOS":
-		if Input.is_action_just_pressed("left_mouse"):
-			if get_global_mouse_position().y < my_paddle.global_position.y:
-				_mouse_pressed_motion = -1
-			else:
-				_mouse_pressed_motion = 1
-		if Input.is_action_just_released("left_mouse"):
-			_mouse_pressed_motion = 0
-		my_paddle_motion = _mouse_pressed_motion
-		if my_paddle_motion == 0:
-			my_paddle_motion = Input.get_action_strength("move_down") - Input.get_action_strength("move_up")
-		my_paddle_motion *= PADDLE_MOTION_SPEED
-		var paddle_pos = _right_paddle.position
-		if Network.get_player_name() == _left_player_name:
-			paddle_pos = _left_paddle.position
-		Network.send_unreliable_message({
-			'type': MESSAGE_TYPE.UPDATE_PADDLE_POS_AND_MOTION,
-			'pos': paddle_pos,
-			'motion': my_paddle_motion
-		})
-		
-		_left_paddle.translate(Vector2(0, _left_paddle_motion * delta))
-		_left_paddle.position.y = clamp(_left_paddle.position.y, 16, rect_size.y - 16)
-		
-		_right_paddle.translate(Vector2(0, _right_paddle_motion * delta))
-		_right_paddle.position.y = clamp(_right_paddle.position.y, 16, rect_size.y - 16)
+	#paddle
+	var my_paddle_motion = 0
+	var my_paddle
+	if _left_player_name != null:
+		my_paddle = _left_paddle if Network.get_player_name() == _left_player_name else _right_paddle
+	else:
+		if get_global_mouse_position().x < 0.5 * rect_size.x:
+			my_paddle = _left_paddle
+		else:
+			my_paddle = _right_paddle
+	#if OS.get_name() == 'Android' or OS.get_name() == "iOS":
+	if Input.is_action_just_pressed("left_mouse"):
+		if get_global_mouse_position().y < my_paddle.global_position.y:
+			_mouse_pressed_motion = -1
+		else:
+			_mouse_pressed_motion = 1
+	if Input.is_action_just_released("left_mouse"):
+		_mouse_pressed_motion = 0
+	my_paddle_motion = _mouse_pressed_motion
+	if my_paddle_motion == 0:
+		my_paddle_motion = Input.get_action_strength("move_down") - Input.get_action_strength("move_up")
+	my_paddle_motion *= PADDLE_MOTION_SPEED
+	
+	Network.send_unreliable_message({
+		'type': MESSAGE_TYPE.UPDATE_PADDLE_POS_AND_MOTION,
+		'pos': my_paddle.position,
+		'motion': my_paddle_motion
+	})
+	
+	_left_paddle.translate(Vector2(0, _left_paddle_motion * delta))
+	_left_paddle.position.y = clamp(_left_paddle.position.y, 16, rect_size.y - 16)
+	
+	_right_paddle.translate(Vector2(0, _right_paddle_motion * delta))
+	_right_paddle.position.y = clamp(_right_paddle.position.y, 16, rect_size.y - 16)
 
 
 

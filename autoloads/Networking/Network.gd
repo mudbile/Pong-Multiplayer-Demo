@@ -1225,6 +1225,7 @@ func send_message(message, specific_player_names=null):
 	_send_message(func_key, message, specific_player_names)
 	return func_key
 
+#if sending to self, you'll get that packet this frame
 func _send_message(f_key, message, specific_player_names=null):
 	var last_known_net_id = _net_id
 	if specific_player_names == null:
@@ -1233,9 +1234,9 @@ func _send_message(f_key, message, specific_player_names=null):
 	var self_included = specific_player_names.has(_my_player_name)
 	#host knows not to forward unreliable messages back to sender
 	#so we don't need to remove ourselves from specific_player_names
-	if self_included:
+	if self_included or specific_player_names.empty():
 		emit_signal('message_received', _my_player_name, [_my_player_name], message)
-		if specific_player_names.size() == 1:
+		if specific_player_names.size() <= 1:
 			fapi.abandon_awaiting_func_completion(f_key)
 			emit_signal('sent_message_received_by_all')
 			return
@@ -1273,6 +1274,7 @@ func send_unreliable_message_to_host(message):
 func send_unreliable_message_to_all_but_self(message):
 	return send_unreliable_message(message, _other_player_names_no_handshake)
 
+#if sending to self, you'll get that packet this frame
 func send_unreliable_message(message, specific_player_names=null):
 	if specific_player_names == null:
 		specific_player_names = _player_names_no_handshake
@@ -1281,9 +1283,9 @@ func send_unreliable_message(message, specific_player_names=null):
 	var self_included = specific_player_names.has(_my_player_name)
 	#host knows not to forward unreliable messages back to sender
 	#so we don't need to remove ourselves from specific_player_names
-	if self_included:
+	if self_included or specific_player_names.empty():
 		emit_signal('message_received', _my_player_name, [_my_player_name], message)
-		if specific_player_names.size() == 1:
+		if specific_player_names.size() <= 1:
 			return
 	
 	_sent_message_id_keeper += 1
