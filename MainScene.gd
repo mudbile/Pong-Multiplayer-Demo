@@ -240,6 +240,9 @@ func _process(delta):
 	if _connect_button.visible:
 		if _connect_button.get_global_rect().has_point(get_global_mouse_position()):
 			_mouse_pressed_motion = 0
+	elif _disconnect_button.visible:
+		if _disconnect_button.get_global_rect().has_point(get_global_mouse_position()):
+			_mouse_pressed_motion = 0
 	my_paddle_motion = _mouse_pressed_motion
 	if my_paddle_motion == 0:
 		my_paddle_motion = Input.get_action_strength("move_down") - Input.get_action_strength("move_up")
