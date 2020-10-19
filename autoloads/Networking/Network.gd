@@ -34,10 +34,9 @@ signal check_handshake_completed(info_or_null_on_error)
 #although beware, too long between packets and NAT will shut port
 #if no one is connnected to this signal, the connection is dropped
 signal faulty_connection(player_name)
-#signal _answer_ready_for_faulty_connection()
 signal connection_restored(player_name)
-#automatically terminate if player_name was host
 signal player_joined(player_name)
+#automatically terminates if player_name was host
 signal player_dropped(player_name)
 #this is only emitted on the player that sent the message.
 #they'll either have received it, or been dropped.
@@ -46,10 +45,15 @@ signal player_dropped(player_name)
 #while Network.fapi.is_func_ongoing(func_key):
 #	yield(Network, 'sent_message_received_by_all')
 signal sent_message_received_by_all()
-#to_players will include this user but maybe others
+#you only receive messages if you're in to_players
 signal message_received(from_player_name, to_players, message)
 signal _send_to_connected_faulty_if_no_reply_completed()
 signal _sent_message_received_by_all()
+
+#this fires when  auto_connect_failed, register_host_failed
+#or join_host_failed. It's a catch-all for when all you want to do 
+#is inform the user of the reason
+signal connect_failed(reason) 
 
 #note that in reply to an autojoin, the handshake 
 #server will send either info for a host or
@@ -62,7 +66,7 @@ signal auto_connect_failed(reason)
 
 #host only
 signal handshake_joined()
-#works same as faulty_connection
+#works same as faulty_connection, call the same decision_to_keep_trying_faulties_made
 signal handshake_faulty()
 signal handshake_connection_restored(client_name)
 #does not automatically terminate session
@@ -70,7 +74,7 @@ signal handshake_dropped()
 signal register_host_failed(reason)
 signal registered_as_host(host_name, handshake_address)
 
-#emitted BEFORE player_joined
+#emitted BEFORE player_joined. emitted on host only
 signal client_joined(client_name, address, extra_info) 
 signal client_dropped(client_name)
 
@@ -307,6 +311,10 @@ func register_as_host(player_name, extra_info=null):
 	
 	if player_name == HANDSHAKE_SERVER_PLAYER_NAME:
 		emit_signal('register_host_failed', 'Invalid player name.')
+		emit_signal('connect_failed', 'Invalid player name.')
+		if last_known_net_id == _net_id:
+			reset()
+		return
 	
 	_udp_socket.set_data_to_add_to_every_packet({'_idx': _idx})
 	var ok = false
@@ -315,9 +323,8 @@ func register_as_host(player_name, extra_info=null):
 			ok = true
 			break
 	if not ok:
-		emit_signal('register_host_failed',
-			"Error initting udp socket to listen at one of %s" % local_ports
-		)
+		emit_signal('register_host_failed', "Error initting udp socket to listen at one of %s" % str(local_ports))
+		emit_signal('connect_failed', "Error initting udp socket to listen at one of %s" % str(local_ports))
 		if last_known_net_id == _net_id:
 			reset()
 		return
@@ -330,9 +337,8 @@ func register_as_host(player_name, extra_info=null):
 	if init_handshake:
 		if not Handshake.is_running():
 			if not Handshake.init():
-				emit_signal('register_host_failed',
-					"Error initting handshake at port %s" % handshake_address[1]
-				)
+				emit_signal('register_host_failed', "Error initting handshake at port %s" % handshake_address[1])
+				emit_signal('connect_failed', "Error initting handshake at port %s" % handshake_address[1])
 				if last_known_net_id == _net_id:
 					reset()
 				return
@@ -355,12 +361,14 @@ func register_as_host(player_name, extra_info=null):
 	
 	if func_result['timed-out']:
 		emit_signal('register_host_failed', 'Handshake server unreachable.')
+		emit_signal('connect_failed', 'Handshake server unreachable.')
 		if last_known_net_id == _net_id:
 			reset()
 		return
 	var reply_data = func_result['reply-data']
 	if reply_data.has('error'):
 		emit_signal('register_host_failed', reply_data['error'])
+		emit_signal('connect_failed', reply_data['error'])
 		if last_known_net_id == _net_id:
 			reset()
 		return
@@ -390,6 +398,9 @@ func join_host(player_name, host_player_name, extra_info_for_host=null):
 	
 	if player_name == HANDSHAKE_SERVER_PLAYER_NAME:
 		emit_signal('join_host_failed', 'Invalid player name.')
+		emit_signal('connect_failed', 'Invalid player name.')
+		if last_known_net_id == _net_id:
+			reset()
 		return
 	
 	_udp_socket.set_data_to_add_to_every_packet({'_idx': _idx})
@@ -399,9 +410,8 @@ func join_host(player_name, host_player_name, extra_info_for_host=null):
 			ok = true
 			break
 	if not ok:
-		emit_signal('join_host_failed',
-			"Error initting udp socket to listen at one of %s" % local_ports
-		)
+		emit_signal('join_host_failed',"Error initting udp socket to listen at one of %s" % str(local_ports))
+		emit_signal('connect_failed', "Error initting udp socket to listen at one of %s" % str(local_ports))
 		if last_known_net_id == _net_id:
 			reset()
 		return
@@ -426,12 +436,14 @@ func join_host(player_name, host_player_name, extra_info_for_host=null):
 	
 	if func_result['timed-out']:
 		emit_signal('join_host_failed', 'Handshake server unreachable.')
+		emit_signal('connect_failed', 'Handshake server unreachable.')
 		if last_known_net_id == _net_id:
 			reset()
 		return
 	var reply_data = func_result['reply-data']
 	if reply_data.has('error'):
 		emit_signal('join_host_failed', reply_data['error'])
+		emit_signal('connect_failed', reply_data['error'])
 		if last_known_net_id == _net_id:
 			reset()
 		return
@@ -472,6 +484,10 @@ func auto_connect(player_name=null, extra_host_info={}, extra_client_info={}):
 	
 	if player_name == HANDSHAKE_SERVER_PLAYER_NAME:
 		emit_signal('auto_connect_failed', 'Invalid player name.')
+		emit_signal('connect_failed', 'Invalid player name.')
+		if last_known_net_id == _net_id:
+			reset()
+		return
 	
 	_udp_socket.set_data_to_add_to_every_packet({'_idx': _idx})
 	var ok = false
@@ -480,9 +496,8 @@ func auto_connect(player_name=null, extra_host_info={}, extra_client_info={}):
 			ok = true
 			break
 	if not ok:
-		emit_signal('auto_connect_failed',
-			"Error initting udp socket to listen at one of %s" % local_ports
-		)
+		emit_signal('auto_connect_failed',"Error initting udp socket to listen at one of %s" % str(local_ports))
+		emit_signal('connect_failed', "Error initting udp socket to listen at one of %s" % str(local_ports))
 		if last_known_net_id == _net_id:
 			reset()
 		return
@@ -497,9 +512,8 @@ func auto_connect(player_name=null, extra_host_info={}, extra_client_info={}):
 	if init_handshake:
 		if not Handshake.is_running():
 			if not Handshake.init():
-				emit_signal('auto_connect_failed',
-					"Error initting handshake at port %s" % handshake_address[1]
-				)
+				emit_signal('auto_connect_failed', "Error initting handshake at port %s" % handshake_address[1])
+				emit_signal('connect_failed',  "Error initting handshake at port %s" % handshake_address[1])
 				if last_known_net_id == _net_id:
 					reset()
 				return
@@ -519,12 +533,14 @@ func auto_connect(player_name=null, extra_host_info={}, extra_client_info={}):
 	
 	if func_result['timed-out']:
 		emit_signal('auto_connect_failed', 'Handshake server unreachable.')
+		emit_signal('connect_failed', 'Handshake server unreachable.')
 		if last_known_net_id == _net_id:
 			reset()
 		return
 	var reply_data = func_result['reply-data']
 	if reply_data.has('error'):
 		emit_signal('auto_connect_failed', reply_data['error'])
+		emit_signal('connect_failed', reply_data['error'])
 		if last_known_net_id == _net_id:
 			reset()
 		return
@@ -555,9 +571,10 @@ func auto_connect(player_name=null, extra_host_info={}, extra_client_info={}):
 		)
 	else:
 		emit_signal('auto_connect_failed',reply_data['error'])
-		
-
-
+		emit_signal('connect_failed',reply_data['error'])
+		if last_known_net_id == _net_id:
+			reset()
+		return
 
 
 
@@ -594,6 +611,7 @@ host_local_ips, host_local_port, host_global_address, extra_info):
 	
 	if func_keys.empty():
 		emit_signal('join_host_failed', 'Host unreachable.')
+		emit_signal('connect_failed', 'Host unreachable.')
 		if last_known_net_id == _net_id:
 			reset()
 		return
@@ -617,12 +635,14 @@ host_local_ips, host_local_port, host_global_address, extra_info):
 		return
 	if func_result['timed-out']:#yeah i know, but if this one timed out screw it...
 		emit_signal('join_host_failed', 'Host unreachable.')
+		emit_signal('connect_failed', 'Host unreachable.')
 		if last_known_net_id == _net_id:
 			reset()
 		return
 	var reply_data = func_result['reply-data']
 	if reply_data.has('error'):
 		emit_signal('join_host_failed', reply_data['error'])
+		emit_signal('connect_failed', reply_data['error'])
 		if last_known_net_id == _net_id:
 			reset()
 		return
@@ -673,6 +693,7 @@ func _check_handshake(f_key, handshake_address, extra_info, num_attempts, attemp
 			ok = true
 			break
 	if not ok:
+		fapi.set_info_for_completed_func(f_key, null)
 		emit_signal('check_handshake_completed', null)
 		return
 	_udp_socket.set_data_to_add_to_every_packet({'_idx': _idx})
@@ -720,6 +741,7 @@ reattempt_even_if_a_reply_has_come):
 			ok = true
 			break
 	if not ok:
+		fapi.set_info_for_completed_func(f_key, [])
 		emit_signal('broadcast_lan_find_handshakes_completed', [])
 		return
 		
@@ -799,6 +821,7 @@ func _get_host_infos_from_handshake(f_key, handshake_address, extra_info):
 			ok = true
 			break
 	if not ok:
+		fapi.set_info_for_completed_func(f_key, null)
 		emit_signal('host_infos_request_completed', null)
 		return
 	
@@ -832,6 +855,7 @@ func _get_misc_from_handshake(f_key, handshake_address, extra_info):
 			ok = true
 			break
 	if not ok:
+		fapi.set_info_for_completed_func(f_key, null)
 		emit_signal('misc_request_completed', null)
 		return
 	
@@ -1407,8 +1431,8 @@ func __send_to_connected_faulty_if_no_reply(f_key, data, player_name, reply_to_i
 						_restore_connection(connection)
 	
 	var was_abandoned = fapi.set_info_for_completed_func(f_key, result)
-	if not was_abandoned:
-		emit_signal('_send_to_connected_faulty_if_no_reply_completed')
+	#if not was_abandoned:
+	emit_signal('_send_to_connected_faulty_if_no_reply_completed')
 
 
 

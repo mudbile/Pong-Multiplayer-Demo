@@ -41,18 +41,16 @@ func _ready():
 	_disconnect_button2.connect("pressed", self, "_disconnect_pressed")
 	_session_terminated(false)
 	
-	Network.connect("auto_connect_failed", self, '_auto_connect_failed')
+	Network.connect("connect_failed", self, '_connect_failed')
 	Network.connect('registered_as_host', self, '_registered_as_host')
-	Network.connect('register_host_failed', self, '_register_host_failed')
 	Network.connect('joined_to_host', self, '_joined_to_host')
-	Network.connect('join_host_failed', self, '_join_host_failed')
 	Network.connect('client_joined', self, '_client_joined')
 	Network.connect('player_dropped', self, '_player_dropped')
 	Network.connect('message_received', self, '_message_received')
 	Network.connect('session_terminated', self, '_session_terminated')
 	Network.connect('debug', self, '_debug')
 	Network.set_network_details({
-		Network.DETAILS_KEY_LOCAL_PORTS: [5999, 6000, 60001, 60002],#give a few to try
+		Network.DETAILS_KEY_LOCAL_PORTS: [5999, 6000, 6001, 6002],#give a few to try
 		Network.DETAILS_KEY_HANDSHAKE_PORT: HANDSHAKE_PORT,
 	})
 	Handshake.set_node_and_func_for_am_i_handshake_request(self, '_get_am_i_handshake_response')
@@ -96,7 +94,7 @@ func _disconnect_pressed():
 ###################################
 #        NETWORK SIGNALS          #
 ###################################
-func _auto_connect_failed(reason):
+func _connect_failed(reason):
 	print('Failed to connect: %s' % reason)
 
 func _registered_as_host(host_name, handshake_address):
@@ -105,15 +103,9 @@ func _registered_as_host(host_name, handshake_address):
 	_disconnect_button.visible = true
 	_connect_button.visible = false
 
-func _register_host_failed(reason):
-	print('Failed to register host: %s' % reason)
-
 func _joined_to_host(host_name, address):
 	_disconnect_button.visible = true
 	_connect_button.visible = false
-
-func _join_host_failed(reason):
-	print('Failed to join host: %s' % reason)
 
 func _client_joined(player_name, player_address, extra_info):
 	Network.send_message({
@@ -199,6 +191,7 @@ func _message_received(from_player_name, to_players, message):
 			_ball_speed = BALL_STARTING_SPEED
 			if not _is_playing:
 				_disconnect_button.visible = true
+				_disconnect_button2.visible = false
 
 
 
@@ -244,6 +237,9 @@ func _process(delta):
 			_mouse_pressed_motion = 1
 	if Input.is_action_just_released("left_mouse"):
 		_mouse_pressed_motion = 0
+	if _connect_button.visible:
+		if _connect_button.get_global_rect().has_point(get_global_mouse_position()):
+			_mouse_pressed_motion = 0
 	my_paddle_motion = _mouse_pressed_motion
 	if my_paddle_motion == 0:
 		my_paddle_motion = Input.get_action_strength("move_down") - Input.get_action_strength("move_up")
