@@ -282,9 +282,9 @@ func _attempt_send_handshake_packets(details, client_global_address, client_pack
 	}
 	#global-address is the one we received their registration on
 	var func_key = _udp_socket.send_data_wait_for_reply(data_for_host, host_global_address)
-	while _udp_socket.fapi.is_func_ongoing(func_key):
+	while _udp_socket.is_func_ongoing(func_key):
 		yield(_udp_socket, 'send_data_await_reply_completed')
-	var func_result = _udp_socket.fapi.get_info_for_completed_func(func_key)
+	var func_result = _udp_socket.get_info_for_completed_func(func_key)
 	if func_result['timed-out']:
 		var msg = 'Could not reach host.'
 		_udp_socket.send_data({'error':msg}, client_global_address, client_packet_id)

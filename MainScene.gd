@@ -43,8 +43,9 @@ func _ready():
 	
 	Network.connect("connect_failed", self, '_connect_failed')
 	Network.connect('registered_as_host', self, '_registered_as_host')
-	Network.connect('joined_to_host', self, '_joined_to_host')
-	Network.connect('client_joined', self, '_client_joined')
+	Network.connect('joined_to_host', self, '_joined_to_host')#client only
+	Network.connect('client_joined', self, '_client_joined')#host only
+	#there's also player_joined called on host and clients but we don't need it here
 	Network.connect('player_dropped', self, '_player_dropped')
 	Network.connect('message_received', self, '_message_received')
 	Network.connect('session_terminated', self, '_session_terminated')
@@ -54,6 +55,7 @@ func _ready():
 		Network.DETAILS_KEY_HANDSHAKE_PORT: HANDSHAKE_PORT,
 	})
 	Handshake.set_node_and_func_for_am_i_handshake_request(self, '_get_am_i_handshake_response')
+
 
 func _get_am_i_handshake_response(client_info):
 	if client_info.has('game-code') and client_info['game-code'] == GAME_CODE:
@@ -65,9 +67,9 @@ func _connect_pressed():
 	_connect_button.disabled = true
 	var handshake_ip = '127.0.0.1'
 	var func_key = Network.broadcast_lan_find_handshakes({'game-code': GAME_CODE})
-	while Network.fapi.is_func_ongoing(func_key):
+	while Network.is_func_ongoing(func_key):
 		yield(Network, 'broadcast_lan_find_handshakes_completed')
-	var infos = Network.fapi.get_info_for_completed_func(func_key)
+	var infos = Network.get_info_for_completed_func(func_key)
 	for info in infos:
 		var data = info['reply-data']
 		if data.has('game-code') and data['game-code'] == GAME_CODE:
@@ -76,6 +78,8 @@ func _connect_pressed():
 	Network.set_network_details({
 		Network.DETAILS_KEY_HANDSHAKE_IP: handshake_ip,
 	})
+	#if there is a suitable host, auto_connect will attempt to join them, 
+	#otherwise it will register this user as a host
 	Network.auto_connect()
 
 
@@ -222,6 +226,9 @@ func _process(delta):
 	#paddle
 	var my_paddle_motion = 0
 	var my_paddle
+	#_left_player_name is null when we aren't connected to anyone- we 
+	#still want the player to able to move the paddles to give them 
+	#something to fiddle with
 	if _left_player_name != null:
 		my_paddle = _left_paddle if Network.get_player_name() == _left_player_name else _right_paddle
 	else:
@@ -229,7 +236,6 @@ func _process(delta):
 			my_paddle = _left_paddle
 		else:
 			my_paddle = _right_paddle
-	#if OS.get_name() == 'Android' or OS.get_name() == "iOS":
 	if Input.is_action_just_pressed("left_mouse"):
 		if get_global_mouse_position().y < my_paddle.global_position.y:
 			_mouse_pressed_motion = -1

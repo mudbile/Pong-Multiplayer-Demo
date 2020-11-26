@@ -3,7 +3,7 @@ extends Node
 signal debug(message)
 
 """
-Hosts just keeps trying to ping handshake server- you can drop it at any time
+Hosts just keeps trying to ping handshake server- host can drop it at any time
 Handshake server drops host after waiting too long for contact.
 Host faulties client after waiting too long for ping reply.
 Client faulties host after no contact for too long
@@ -15,9 +15,6 @@ easily yield until everyone gets it.
 
 """
 todo:
-	* move RESEND_INTERVAL_SECS from udp socket to net details
-	* test on lan with >2 people
-	* test on wan with >2 people
 	* documentation
 	* transer_to_enet function
 """
@@ -42,7 +39,7 @@ signal player_dropped(player_name)
 #they'll either have received it, or been dropped.
 #Example:
 #var func_key = Network.send_message(message_input_field.text)
-#while Network.fapi.is_func_ongoing(func_key):
+#while Network._fapi.is_func_ongoing(func_key):
 #	yield(Network, 'sent_message_received_by_all')
 signal sent_message_received_by_all()
 #you only receive messages if you're in to_players
@@ -88,8 +85,8 @@ signal joined_to_host(host_name, address)
 const CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const HANDSHAKE_SERVER_PLAYER_NAME = "<Handshake Server>"
 const CUSTOM_UDP_WRAPPER_SCRIPT = preload("./UDPSocketWrapper.gd")
-var key_generator = KeyGenerator.new()
-var fapi = preload('./FuncAwaitAPI.gd').new()
+var _key_generator = KeyGenerator.new()
+var _fapi = preload('./FuncAwaitAPI.gd').new()
 
 var _player_is_host #true on registerration complete, false on joined to host, else null
 var _host_player_name
@@ -102,7 +99,7 @@ var _is_resetting = false
 #began, the function knows the network has been reset
 #and exits
 onready var _net_id = 0
-onready var _unique_id = key_generator.generate_key()
+onready var _unique_id = _key_generator.generate_key()
 onready var _idx = "%s|%s" % [_unique_id, _net_id]
 var _is_networking = false
 var _udp_socket
@@ -161,6 +158,13 @@ enum {
 	DETAILS_KEY_LOCAL_PORTS,
 	DETAILS_KEY_PING_INTERVAL_SECS,
 	DETAILS_KEY_MAX_SECS_WITHOUT_CONTACT_FROM_HOST_BEFORE_FAULTY,
+	#passed through to _udp_socket. This is the delay before the first resend
+	#and the amount by which the delay increases for each consectuive resend.
+	#until the packet times out. Of course, not applicable to unreliable messages
+	DETAILS_KEY_DELAY_BEFORE_FIRST_RESEND_SECS,
+	DETAILS_KEY_RESEND_DELAY_INCREMENT_SECS,
+	DETAILS_KEY_PACKET_TIMEOUT_SECS,
+	
 }
 var _network_details = {
 	DETAILS_KEY_HANDSHAKE_PORT: 5111,
@@ -169,12 +173,26 @@ var _network_details = {
 	DETAILS_KEY_LOCAL_PORTS: [5141],#as good a default as any, I suppose!
 	DETAILS_KEY_PING_INTERVAL_SECS: 8,
 	DETAILS_KEY_MAX_SECS_WITHOUT_CONTACT_FROM_HOST_BEFORE_FAULTY: 20,
+	DETAILS_KEY_DELAY_BEFORE_FIRST_RESEND_SECS: 1,
+	DETAILS_KEY_RESEND_DELAY_INCREMENT_SECS: 0.5,
+	DETAILS_KEY_PACKET_TIMEOUT_SECS: 10,
+	
 }
 #pass a dict with DETAILS_KEY_... entries
 func set_network_details(info):
 	for key in info:
 		if _network_details.has(key):
 			_network_details[key] = info[key]
+	if (info.has(DETAILS_KEY_DELAY_BEFORE_FIRST_RESEND_SECS)
+	or info.has(DETAILS_KEY_RESEND_DELAY_INCREMENT_SECS)):
+		_udp_socket.set_packet_resend_secs(
+			_network_details[DETAILS_KEY_DELAY_BEFORE_FIRST_RESEND_SECS],
+			_network_details[DETAILS_KEY_RESEND_DELAY_INCREMENT_SECS]
+		)
+	if info.has(DETAILS_KEY_PACKET_TIMEOUT_SECS):
+		_udp_socket.set_packet_timeout_secs(
+			_network_details[DETAILS_KEY_PACKET_TIMEOUT_SECS]
+		)
 func get_network_detail(key):
 	return _network_details[key]
 
@@ -226,6 +244,27 @@ func get_active_port():
 func stop_accepting_new_client():
 	_is_accepting_new_clients = false
 
+
+
+
+#############################################
+#       FAPI
+#############################################
+func is_func_ongoing(func_key):
+	return _fapi.is_func_ongoing(func_key)
+func get_info_for_completed_func(func_key):
+	return _fapi.get_info_for_completed_func(func_key)
+func abandon_awaiting_func_completion(func_key):
+	return _fapi.abandon_awaiting_func_completion(func_key)
+
+
+
+
+
+
+
+
+
 #############################################
 #       Registering, Joining, Misc and _ready
 #############################################
@@ -237,8 +276,6 @@ func _ready():
 	_udp_socket.set_minimisation_map(_UDP_SOCKET_MINIMISATION_KEYS)
 	_udp_socket.connect('packet_received', self, '_udp_packet_received')
 
-func set_packet_timeout_secs(packet_timeout):
-	_udp_socket.set_packet_timeout_secs(packet_timeout)
 
 func get_session_id():
 	return _net_id
@@ -353,9 +390,9 @@ func register_as_host(player_name, extra_info=null):
 	var func_key = _udp_socket.send_data_wait_for_reply( 
 		reg_data, handshake_address
 	)
-	while _udp_socket.fapi.is_func_ongoing(func_key):
+	while _udp_socket.is_func_ongoing(func_key):
 		yield(_udp_socket, 'send_data_await_reply_completed')
-	var func_result = _udp_socket.fapi.get_info_for_completed_func(func_key)
+	var func_result = _udp_socket.get_info_for_completed_func(func_key)
 	if last_known_net_id != _net_id:
 		return
 	
@@ -428,9 +465,9 @@ func join_host(player_name, host_player_name, extra_info_for_host=null):
 	var func_key = _udp_socket.send_data_wait_for_reply( 
 		req_data, handshake_address
 	)
-	while _udp_socket.fapi.is_func_ongoing(func_key):
+	while _udp_socket.is_func_ongoing(func_key):
 		yield(_udp_socket, 'send_data_await_reply_completed')
-	var func_result = _udp_socket.fapi.get_info_for_completed_func(func_key)
+	var func_result = _udp_socket.get_info_for_completed_func(func_key)
 	if last_known_net_id != _net_id:
 		return
 	
@@ -525,9 +562,9 @@ func auto_connect(player_name=null, extra_host_info={}, extra_client_info={}):
 	var func_key = _udp_socket.send_data_wait_for_reply( 
 		req_data, handshake_address
 	)
-	while _udp_socket.fapi.is_func_ongoing(func_key):
+	while _udp_socket.is_func_ongoing(func_key):
 		yield(_udp_socket, 'send_data_await_reply_completed')
-	var func_result = _udp_socket.fapi.get_info_for_completed_func(func_key)
+	var func_result = _udp_socket.get_info_for_completed_func(func_key)
 	if last_known_net_id != _net_id:
 		return
 	
@@ -619,14 +656,14 @@ host_local_ips, host_local_port, host_global_address, extra_info):
 	var first_func_key_completed
 	while true:
 		for func_key in func_keys:
-			if not _udp_socket.fapi.is_func_ongoing(func_key):
+			if not _udp_socket.is_func_ongoing(func_key):
 				first_func_key_completed = func_key
 				break
 		if first_func_key_completed != null:
 			break
 		else:
 			yield(_udp_socket, 'send_data_await_reply_completed')
-	var func_result = _udp_socket.fapi.get_info_for_completed_func(first_func_key_completed)
+	var func_result = _udp_socket.get_info_for_completed_func(first_func_key_completed)
 	for func_key in func_keys:
 		_udp_socket.abandon_send_data_wait_for_reply(func_key)
 	_attempting_to_join_host = false
@@ -652,7 +689,7 @@ host_local_ips, host_local_port, host_global_address, extra_info):
 	var func_key = _udp_socket.send_data_wait_for_reply( 
 		{'players-inited':true}, _host_address
 	)
-	_udp_socket.fapi.abandon_awaiting_func_completion(func_key)
+	_udp_socket.abandon_awaiting_func_completion(func_key)
 	
 	var players = reply_data['init-players']
 	var host_idx = reply_data['_idx']
@@ -679,7 +716,7 @@ host_local_ips, host_local_port, host_global_address, extra_info):
 
 
 func check_handshake(handshake_address, extra_info, num_attempts=2, attempt_timeout=0.6):
-	var key = fapi.get_add_key()
+	var key = _fapi.get_add_key()
 	_check_handshake(
 		key, handshake_address, extra_info, num_attempts, attempt_timeout
 	)
@@ -693,7 +730,7 @@ func _check_handshake(f_key, handshake_address, extra_info, num_attempts, attemp
 			ok = true
 			break
 	if not ok:
-		fapi.set_info_for_completed_func(f_key, null)
+		_fapi.set_info_for_completed_func(f_key, null)
 		emit_signal('check_handshake_completed', null)
 		return
 	_udp_socket.set_data_to_add_to_every_packet({'_idx': _idx})
@@ -702,11 +739,11 @@ func _check_handshake(f_key, handshake_address, extra_info, num_attempts, attemp
 		attempt_timeout, 0, attempt_timeout*num_attempts
 	)
 	
-	while _udp_socket.fapi.is_func_ongoing(func_key):
+	while _udp_socket.is_func_ongoing(func_key):
 		yield(_udp_socket, 'send_data_await_reply_completed')
 	_udp_socket.stop_listening()
-	var func_result = _udp_socket.fapi.get_info_for_completed_func(func_key)
-	fapi.set_info_for_completed_func(f_key, func_result)
+	var func_result = _udp_socket.get_info_for_completed_func(func_key)
+	_fapi.set_info_for_completed_func(f_key, func_result)
 	emit_signal('check_handshake_completed', func_result)
 	
 	
@@ -719,7 +756,7 @@ func _check_handshake(f_key, handshake_address, extra_info, num_attempts, attemp
 #user should test reply data to see whether handshake is really appropriate
 func broadcast_lan_find_handshakes(extra_info, num_attempts=4, attempt_timeout=0.1, 
 reattempt_even_if_a_reply_has_come=false):
-	var key = fapi.get_add_key()
+	var key = _fapi.get_add_key()
 	_broadcast_lan_find_handshakes(
 		key, extra_info, num_attempts, 
 		attempt_timeout, reattempt_even_if_a_reply_has_come
@@ -741,7 +778,7 @@ reattempt_even_if_a_reply_has_come):
 			ok = true
 			break
 	if not ok:
-		fapi.set_info_for_completed_func(f_key, [])
+		_fapi.set_info_for_completed_func(f_key, [])
 		emit_signal('broadcast_lan_find_handshakes_completed', [])
 		return
 		
@@ -752,17 +789,17 @@ reattempt_even_if_a_reply_has_come):
 		{'are-you-handshake': extra_info}, handshake_port, num_attempts, attempt_timeout, 
 		reattempt_even_if_a_reply_has_come
 	)
-	while _udp_socket.fapi.is_func_ongoing(func_key):
+	while _udp_socket.is_func_ongoing(func_key):
 		yield(_udp_socket, 'broadcast_data_accumulate_replies_completed')
 	_udp_socket.disable_broadcast()
 	_udp_socket.stop_listening()
-	var func_result = _udp_socket.fapi.get_info_for_completed_func(func_key)
+	var func_result = _udp_socket.get_info_for_completed_func(func_key)
 	var replies
 	if func_result == null:
 		replies = []
 	else:
 		replies =  func_result['replies']
-	fapi.set_info_for_completed_func(f_key, replies)
+	_fapi.set_info_for_completed_func(f_key, replies)
 	emit_signal('broadcast_lan_find_handshakes_completed', replies)
 
 
@@ -799,7 +836,7 @@ func update_handhake_host_info(new_extra_info):
 		_my_player_name, new_extra_info
 	)
 	var fk = _send_to_connected_faulty_if_no_reply(data, HANDSHAKE_SERVER_PLAYER_NAME)
-	fapi.abandon_awaiting_func_completion(fk)
+	_fapi.abandon_awaiting_func_completion(fk)
 
 
 #note that the handshake addres here could be different
@@ -808,7 +845,7 @@ func update_handhake_host_info(new_extra_info):
 #request failed. extra_info is passed to the handshake
 #to narrow down the hosts about which info should be sent back
 func get_host_infos_from_handshake(handshake_address, extra_info={}):
-	var key = fapi.get_add_key()
+	var key = _fapi.get_add_key()
 	_get_host_infos_from_handshake(key, handshake_address, extra_info)
 	return key
 
@@ -821,18 +858,18 @@ func _get_host_infos_from_handshake(f_key, handshake_address, extra_info):
 			ok = true
 			break
 	if not ok:
-		fapi.set_info_for_completed_func(f_key, null)
+		_fapi.set_info_for_completed_func(f_key, null)
 		emit_signal('host_infos_request_completed', null)
 		return
 	
 	var func_key = _udp_socket.send_data_wait_for_reply( 
 		{'info-request':extra_info}, handshake_address
 	)
-	while _udp_socket.fapi.is_func_ongoing(func_key):
+	while _udp_socket.is_func_ongoing(func_key):
 		yield(_udp_socket, 'send_data_await_reply_completed')
 	_udp_socket.stop_listening()
-	var func_result = _udp_socket.fapi.get_info_for_completed_func(func_key)
-	fapi.set_info_for_completed_func(f_key, func_result)
+	var func_result = _udp_socket.get_info_for_completed_func(func_key)
+	_fapi.set_info_for_completed_func(f_key, func_result)
 	emit_signal('host_infos_request_completed', func_result)
 
 
@@ -842,7 +879,7 @@ func _get_host_infos_from_handshake(f_key, handshake_address, extra_info):
 #the function result will contain info or null if the 
 #request failed.
 func get_misc_from_handshake(handshake_address, extra_info={}):
-	var key = fapi.get_add_key()
+	var key = _fapi.get_add_key()
 	_get_misc_from_handshake(key, handshake_address, extra_info)
 	return key
 
@@ -855,18 +892,18 @@ func _get_misc_from_handshake(f_key, handshake_address, extra_info):
 			ok = true
 			break
 	if not ok:
-		fapi.set_info_for_completed_func(f_key, null)
+		_fapi.set_info_for_completed_func(f_key, null)
 		emit_signal('misc_request_completed', null)
 		return
 	
 	var func_key = _udp_socket.send_data_wait_for_reply( 
 		{'misc-request':extra_info}, handshake_address
 	)
-	while _udp_socket.fapi.is_func_ongoing(func_key):
+	while _udp_socket.is_func_ongoing(func_key):
 		yield(_udp_socket, 'send_data_await_reply_completed')
 	_udp_socket.stop_listening()
-	var func_result = _udp_socket.fapi.get_info_for_completed_func(func_key)
-	fapi.set_info_for_completed_func(f_key, func_result)
+	var func_result = _udp_socket.get_info_for_completed_func(func_key)
+	_fapi.set_info_for_completed_func(f_key, func_result)
 	emit_signal('misc_request_completed', func_result)
 
 
@@ -915,7 +952,7 @@ func _udp_packet_received(data, sender_address, packet_id):
 						pass
 					else:
 						var fk = _send_to_connected_faulty_if_no_reply(join_data, player_name)
-						fapi.abandon_awaiting_func_completion(fk)
+						_fapi.abandon_awaiting_func_completion(fk)
 				
 				_packet_from_connected(data, packet_id, sender_address, client_connection)
 				return
@@ -1160,10 +1197,10 @@ func _packet_from_connected(data, packet_id, sender_address, connection):
 		while not func_keys.empty():
 			var new_func_keys = []
 			for key in func_keys:
-				if fapi.is_func_ongoing(key):
+				if _fapi.is_func_ongoing(key):
 					new_func_keys.push_back(key)
 				else:
-					fapi.abandon_awaiting_func_completion(key)
+					_fapi.abandon_awaiting_func_completion(key)
 			func_keys = new_func_keys
 			if not func_keys.empty():
 				yield(self, '_send_to_connected_faulty_if_no_reply_completed')
@@ -1177,7 +1214,7 @@ func _packet_from_connected(data, packet_id, sender_address, connection):
 			emit_signal('_sent_message_received_by_all')
 		else:
 			var func_key = _send_to_connected_faulty_if_no_reply(d, data['from'])
-			fapi.abandon_awaiting_func_completion(func_key)
+			_fapi.abandon_awaiting_func_completion(func_key)
 	
 	elif data.has('message'):
 		
@@ -1245,7 +1282,7 @@ func send_message_to_all_but_self(message):
 func send_message(message, specific_player_names=null):
 	if _player_is_host == null:
 		return
-	var func_key = fapi.get_add_key()
+	var func_key = _fapi.get_add_key()
 	_send_message(func_key, message, specific_player_names)
 	return func_key
 
@@ -1261,7 +1298,7 @@ func _send_message(f_key, message, specific_player_names=null):
 	if self_included or specific_player_names.empty():
 		emit_signal('message_received', _my_player_name, [_my_player_name], message)
 		if specific_player_names.size() <= 1:
-			fapi.abandon_awaiting_func_completion(f_key)
+			_fapi.abandon_awaiting_func_completion(f_key)
 			emit_signal('sent_message_received_by_all')
 			return
 	
@@ -1280,14 +1317,14 @@ func _send_message(f_key, message, specific_player_names=null):
 		_packet_from_connected(data, null, null, null)
 	else:
 		var func_key = _send_to_connected_faulty_if_no_reply(data, _host_player_name)
-		fapi.abandon_awaiting_func_completion(func_key)
+		_fapi.abandon_awaiting_func_completion(func_key)
 	
 	while _sent_message_ids_not_received_by_all.has(message_id):
 		yield(self, '_sent_message_received_by_all')
 		if last_known_net_id != _net_id:
 			return
 	
-	fapi.abandon_awaiting_func_completion(f_key)
+	_fapi.abandon_awaiting_func_completion(f_key)
 	emit_signal('sent_message_received_by_all')
 
 
@@ -1358,7 +1395,7 @@ func get_names_of_faulty_connections():
 	return ret
 
 func _send_to_connected_faulty_if_no_reply(data, player_name, reply_to_id=null):
-	var func_key = fapi.get_add_key()
+	var func_key = _fapi.get_add_key()
 	__send_to_connected_faulty_if_no_reply(func_key, data, player_name, reply_to_id)
 	return func_key
 
@@ -1381,9 +1418,9 @@ func __send_to_connected_faulty_if_no_reply(f_key, data, player_name, reply_to_i
 	#or _give_up_on_faulty_connections is set true
 	#or, of course, _net_id changes or the client is re-joined
 	while true:
-		while _udp_socket.fapi.is_func_ongoing(func_key):
+		while _udp_socket.is_func_ongoing(func_key):
 			yield(_udp_socket, 'send_data_await_reply_completed')
-		var func_result = _udp_socket.fapi.get_info_for_completed_func(func_key)
+		var func_result = _udp_socket.get_info_for_completed_func(func_key)
 		if (last_known_net_id != _net_id 
 		or connection['removed'] 
 		or not connection['valid-send-func-keys'].has(f_key)):
@@ -1430,7 +1467,7 @@ func __send_to_connected_faulty_if_no_reply(f_key, data, player_name, reply_to_i
 				if connection['faulty-for-no-reply-to-f-keys'].empty():
 						_restore_connection(connection)
 	
-	var was_abandoned = fapi.set_info_for_completed_func(f_key, result)
+	var was_abandoned = _fapi.set_info_for_completed_func(f_key, result)
 	#if not was_abandoned:
 	emit_signal('_send_to_connected_faulty_if_no_reply_completed')
 
@@ -1468,7 +1505,7 @@ func _drop_connection(connection, no_signals=false, send_dropme=true, coming_fro
 			var drophim_data = _make_drop_data(player_name, connection['idx'])
 			for p_name in _other_player_names_no_handshake:
 				var func_key = _send_to_connected_faulty_if_no_reply(drophim_data, p_name)
-				fapi.abandon_awaiting_func_completion(func_key)
+				_fapi.abandon_awaiting_func_completion(func_key)
 		
 		if not no_signals:
 			emit_signal('player_dropped', connection['player-name'])
@@ -1634,9 +1671,9 @@ func _send_ping(connection):
 		ping_data,
 		connection['player-name']
 	)
-	while fapi.is_func_ongoing(func_key):
+	while _fapi.is_func_ongoing(func_key):
 		yield(self, '_send_to_connected_faulty_if_no_reply_completed')
-	var func_result = fapi.get_info_for_completed_func(func_key)
+	var func_result = _fapi.get_info_for_completed_func(func_key)
 	if (last_known_net_id != _net_id 
 	or connection['removed'] 
 	or not connection['valid-send-func-keys'].has(func_key)):

@@ -26,6 +26,7 @@ Provides:
 		  the same on every side of the connection. This
 		  allows your code to have readable keys, while
 		  maintaining small messages. 
+	* broadcasting and accumulating replies
 	
 """
 signal broadcast_data_accumulate_replies_completed()
@@ -44,7 +45,7 @@ const NUM_BYTES_IN_PARCEL_BLOCK = 450
 #windows doesnt like broadcasting on 255.255.255.255
 const BROADCAST_ADDRESS = "192.168.1.255"
 
-var fapi = preload('./FuncAwaitAPI.gd').new()
+var _fapi = preload('./FuncAwaitAPI.gd').new()
 
 var _dummy_socket = PacketPeerUDP.new()
 var _udp_socket = PacketPeerUDP.new()
@@ -59,6 +60,8 @@ var _listening_num = 0
 var _broadcast_enabled_num = 0
 var _local_port
 var _packet_timeout = 10
+var _initial_resend_timer = 1
+var _resend_timer_increment = 0.5
 var _data_to_add_to_every_packet
 #full id is client address string + packet id
 var _full_ids_received_to_reply_sent = {}
@@ -76,11 +79,26 @@ func set_packet_timeout_secs(packet_timeout):
 	_packet_timeout = packet_timeout
 func get_packet_timeout_secs():
 	return _packet_timeout
+func set_packet_resend_secs(first_resend, increment):
+	_initial_resend_timer = first_resend
+	_resend_timer_increment = increment
+
+	
 func set_minimisation_map(minimisation_map):
 	_unminified_keys_to_minified_keys = minimisation_map
 	for key in minimisation_map:
 		_minified_keys_to_unminified_keys[minimisation_map[key]] = key
 
+
+#############################################
+#       FAPI
+#############################################
+func is_func_ongoing(func_key):
+	return _fapi.is_func_ongoing(func_key)
+func get_info_for_completed_func(func_key):
+	return _fapi.get_info_for_completed_func(func_key)
+func abandon_awaiting_func_completion(func_key):
+	return _fapi.abandon_awaiting_func_completion(func_key)
 
 
 func get_port():
@@ -161,14 +179,14 @@ func send_data(data, address, replying_to_id=null):
 
 #resends  until it either times out or gets reply. eg:
 #var func_key = _udp_socket.send_data_wait_for_reply(data, address)
-#while _udp_socket.fapi.is_func_ongoing(func_key):
+#while _udp_socket.is_func_ongoing(func_key):
 #	yield(_udp_socket, 'send_data_await_reply_completed')
-#var func_result = _udp_socket.fapi.get_info_for_completed_func(func_key)
+#var func_result = _udp_socket.get_info_for_completed_func(func_key)
 #func_result['timed-out']:
 #		...handle_timeout
 #else:
 #	var reply_data = func_result['reply-data']
-func send_data_wait_for_reply(data, address, replying_to_id=null, resend_timer=1, resend_timer_increment=0.5, custom_timeout=null):
+func send_data_wait_for_reply(data, address, replying_to_id=null, custom_resend_timer=1, custom_resend_timer_increment=0.5, custom_timeout=null):
 	var id = _key_generator.generate_key()
 	while _outgoing_parcel_info.has(id):
 		id = _key_generator.generate_key()
@@ -184,15 +202,15 @@ func send_data_wait_for_reply(data, address, replying_to_id=null, resend_timer=1
 		'has-reply': false, 
 		'reply-data': null, 
 		'times-sent': 1, 
-		'resend-timer': resend_timer, 
-		'resend-timer-init': resend_timer,
-		'resend-timer-increment': resend_timer_increment,
+		'resend-timer': custom_resend_timer if custom_resend_timer != null else _initial_resend_timer, 
+		'resend-timer-init': custom_resend_timer if custom_resend_timer != null else _initial_resend_timer, 
+		'resend-timer-increment': custom_resend_timer_increment if custom_resend_timer_increment != null else _resend_timer_increment,
 		'address': address,
 		'timeout': custom_timeout if custom_timeout != null else _packet_timeout,
 	}
 	_wait_infos[id] = info
 	
-	var func_key = fapi.get_add_key()
+	var func_key = _fapi.get_add_key()
 	info['func-key'] = func_key
 	_parcel_send_packet(info['data'], info['id'], replying_to_id, info['address'])
 	return func_key
@@ -218,7 +236,7 @@ num_attempts, attempt_timeout, reattempt_even_if_a_reply_has_come):
 	}
 	_accumulator_wait_infos[id] = info
 	
-	var func_key = fapi.get_add_key()
+	var func_key = _fapi.get_add_key()
 	info['func-key'] = func_key
 	_parcel_send_packet(info['data'], info['id'], null, info['address'])
 	return func_key
@@ -229,7 +247,7 @@ func _broadcast_data_accumulate_replies_finished(info):
 	var id = info['id']
 	_accumulator_wait_infos.erase(id)
 	
-	var was_abandoned = fapi.set_info_for_completed_func(info['func-key'], {
+	var was_abandoned = _fapi.set_info_for_completed_func(info['func-key'], {
 		'replies': info['reply-id-to-info'].values(),
 	})
 	if not was_abandoned:
@@ -240,7 +258,7 @@ func _send_data_wait_for_reply_finished(info):
 	var id = info['id']
 	_wait_infos.erase(id)
 	
-	var was_abandoned = fapi.set_info_for_completed_func(info['func-key'], {
+	var was_abandoned = _fapi.set_info_for_completed_func(info['func-key'], {
 		'timed-out': not info['has-reply'], 
 		'reply-data': info['reply-data'],
 		'reply-id': info['reply-id'],
@@ -258,7 +276,7 @@ func abandon_send_data_wait_for_reply(func_key, cancel_sending=true):
 			if _wait_infos[id]['func-key'] == func_key:
 				_wait_infos.erase(id)
 				break
-	fapi.abandon_awaiting_func_completion(func_key)
+	_fapi.abandon_awaiting_func_completion(func_key)
 
 
 
