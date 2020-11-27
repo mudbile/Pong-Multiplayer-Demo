@@ -3,7 +3,6 @@ extends Node
 signal debug(message)
 
 """
-Data sent must always be a dictionary.
 Provides:
 	* parcelling such that each parcel is under 512 bytes
 	* two ways to send:
@@ -21,11 +20,7 @@ Provides:
 		in packet_received. It is expected that the handler
 		is yielding on send_data_await_reply_completed.
 	* compression - optional, set COMPRESSION_TYPE null to turn off
-	* dictionary key minimisation #todo
-		* pass an array of long keys, which must be 
-		  the same on every side of the connection. This
-		  allows your code to have readable keys, while
-		  maintaining small messages. 
+	* dictionary key minimisation
 	* broadcasting and accumulating replies
 	
 """
@@ -42,9 +37,9 @@ var COMPRESSION_TYPE = File.COMPRESSION_ZSTD
 const PARCELS_SENT_BEFORE_YIELD_UNTIL_IDLE = 4
 #goal is < 512. Needs to save room for id, etc.
 const NUM_BYTES_IN_PARCEL_BLOCK = 450
-#windows doesnt like broadcasting on 255.255.255.255
+#windows doesnt like broadcasting on 255.255.255.255 (or android doesnt like receiving)
+#const BROADCAST_ADDRESS = "255.255.255.255"
 const BROADCAST_ADDRESS = "192.168.1.255"
-
 var _fapi = preload('./FuncAwaitAPI.gd').new()
 
 var _dummy_socket = PacketPeerUDP.new()
@@ -113,13 +108,14 @@ func enable_broadcast():
 	if _broadcast_enabled_num == 1:
 		#Network.emit_signal("debug", "Enabling broadcast")
 		_udp_socket.set_broadcast_enabled(true)
+		print('broadcastign enabled')
 
 func disable_broadcast():
 	_broadcast_enabled_num -= 1
 	if _broadcast_enabled_num == 0:
 		#Network.emit_signal("debug", "Disabling broadcast")
 		_udp_socket.set_broadcast_enabled(false)
-
+		print('broadcssting disabled')
 
 
 
@@ -130,6 +126,7 @@ func start_listening(local_port):
 	var port
 	if not _udp_socket.is_listening():
 		err = _udp_socket.listen(local_port)
+		print('listening to %s' % local_port)
 		if err == OK:
 			_local_port = local_port
 	if err == OK:
@@ -151,6 +148,7 @@ func stop_listening(resume_wait_funcs_as_timeout=true):
 		_broadcast_data_accumulate_replies_finished(wait_info)
 	if _udp_socket.is_listening():
 		_udp_socket.close()
+		print('stopped listening to %s' % _local_port)
 	_outgoing_parcel_info.clear()
 	_incoming_parcel_info.clear()
 	_wait_infos.clear()
@@ -164,8 +162,6 @@ func stop_listening(resume_wait_funcs_as_timeout=true):
 
 
 func send_data(data, address, replying_to_id=null):
-	if data != null and typeof(data) != TYPE_DICTIONARY:
-		print('Warning: data sent through custom udp should be null or a dictionary. sent: ' + str(data))
 	var id = _key_generator.generate_key()
 	while _outgoing_parcel_info.has(id):
 		id = _key_generator.generate_key()
@@ -463,7 +459,7 @@ func _process(delta):
 		if result == null:
 			continue
 		var data = result
-		
+		#print(data)
 		var full_id = str(sender_address) + str(data['id'])
 		if _full_ids_received_to_reply_sent.has(full_id):
 			if _full_ids_received_to_reply_sent[full_id] != null:

@@ -72,6 +72,7 @@ func init():
 		print("Error initting handshake at port %s" % port)
 		reset()
 		return false
+	_udp_socket.enable_broadcast()
 	_is_running = true
 	
 	print('Running as handshake server at port %s' % port)

@@ -102,7 +102,7 @@ func _connect_failed(reason):
 	print('Failed to connect: %s' % reason)
 
 func _registered_as_host(host_name, handshake_address):
-	Network.enable_broadcast()
+	#Network.enable_broadcast()
 	_status_label.text = 'Waiting for player 2...'
 	_disconnect_button.visible = true
 	_connect_button.visible = false
