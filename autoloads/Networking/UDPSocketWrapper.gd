@@ -126,8 +126,8 @@ func start_listening(local_port):
 	var port
 	if not _udp_socket.is_listening():
 		err = _udp_socket.listen(local_port)
-		print('listening to %s' % local_port)
 		if err == OK:
+			print('listening to %s' % local_port)
 			_local_port = local_port
 	if err == OK:
 		_listening_num += 1

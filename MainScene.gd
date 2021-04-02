@@ -65,7 +65,7 @@ func _get_am_i_handshake_response(client_info):
 func _connect_pressed():
 	_status_label.text = 'Connecting...'
 	_connect_button.disabled = true
-	var handshake_ip = '127.0.0.1'
+	var handshake_ip = '127.0.0.1'#ie same machine, init handshake
 	var func_key = Network.broadcast_lan_find_handshakes({'game-code': GAME_CODE})
 	while Network.is_func_ongoing(func_key):
 		yield(Network, 'broadcast_lan_find_handshakes_completed')

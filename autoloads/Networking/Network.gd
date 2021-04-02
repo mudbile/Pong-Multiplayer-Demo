@@ -17,6 +17,9 @@ easily yield until everyone gets it.
 todo:
 	* documentation
 	* transer_to_enet function
+	failing for two instances on same linux box because ports are being reused
+		might have somethign to do with this: https://github.com/godotengine/godot/commit/cae0d8853d7a373ad8720289c12c7c2e7b5ef240
+		see here for reading material: 
 """
 signal session_terminated(was_registered_host)
 signal host_infos_request_completed(info_or_null_on_error)
@@ -367,8 +370,10 @@ func register_as_host(player_name, extra_info=null):
 		return
 
 	var init_handshake = false
-	if handshake_address[0] == ""  or handshake_address[0] == '127.0.0.1':
+	if handshake_address[0] == '127.0.0.1':
 		init_handshake = true
+	if handshake_address[0] == '':
+		handshake_address[0] = '127.0.0.1'
 	#elif local_ips.has(handshake_address[0]):
 	#	init_handshake = true
 	if init_handshake:
@@ -542,8 +547,10 @@ func auto_connect(player_name=null, extra_host_info={}, extra_client_info={}):
 	
 	
 	var init_handshake = false
-	if handshake_address[0] == ""  or handshake_address[0] == '127.0.0.1':
+	if handshake_address[0] == '127.0.0.1':
 		init_handshake = true
+	if handshake_address[0] == '':
+		handshake_address[0] = '127.0.0.1'
 	#elif local_ips.has(handshake_address[0]):
 	#	init_handshake = true
 	if init_handshake:
